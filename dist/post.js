@@ -2878,25 +2878,32 @@ var getVars = () => {
   }
   const options = {
     key: core.getInput("key") || "no-key",
-    path: core.getInput("path"),
+    path: core.getInput("path").split("\n"),
     strategy: core.getInput("strategy")
   };
-  if (!options.path) {
+  if (options.path.length <= 0) {
     throw new TypeError("path is required but was not provided.");
   }
   if (!Object.values(STRATEGIES).includes(options.strategy)) {
     throw new TypeError(`Unknown strategy ${options.strategy}`);
   }
   const cacheDir = path__default.default.join(RUNNER_TOOL_CACHE, GITHUB_REPOSITORY, options.key);
-  const cachePath = path__default.default.join(cacheDir, options.path);
-  const targetPath = path__default.default.resolve(CWD, options.path);
-  const { dir: targetDir } = path__default.default.parse(targetPath);
+  const cachePathList = [];
+  const targetPathList = [];
+  const targetDirList = [];
+  options.path.forEach((p) => {
+    cachePathList.push(path__default.default.join(cacheDir, p));
+    const targetPath = path__default.default.resolve(CWD, p);
+    targetPathList.push(targetPath);
+    const { dir: targetDir } = path__default.default.parse(targetPath);
+    targetDirList.push(targetDir);
+  });
   return {
     cacheDir,
-    cachePath,
+    cachePath: cachePathList,
     options,
-    targetDir,
-    targetPath
+    targetDir: targetDirList,
+    targetPath: targetPathList
   };
 };
 
@@ -2924,25 +2931,34 @@ var log_default = import_loglevel.default;
 var import_io_util = __toESM(require_io_util());
 async function post() {
   try {
-    const { cacheDir, targetPath, cachePath, options } = getVars();
-    await (0, import_io.mkdirP)(cacheDir);
-    switch (options.strategy) {
-      case "copy-immutable":
-        if (await (0, import_io_util.exists)(cachePath)) {
-          log_default.info(`Cache already exists, skipping`);
-          return;
+    const vars = getVars();
+    for (let i = 0; i < vars.cachePath.length; i++) {
+      const cachePath = vars.cachePath[i];
+      const cacheDir = vars.cacheDir[i];
+      const targetPath = vars.targetPath[i];
+      const options = vars.options;
+      if (await (0, import_io_util.exists)(targetPath)) {
+        await (0, import_io.mkdirP)(cacheDir);
+        switch (options.strategy) {
+          case "copy-immutable":
+            if (await (0, import_io_util.exists)(cachePath)) {
+              log_default.info(`Cache already exists, skipping`);
+              return;
+            }
+            await (0, import_io.cp)(targetPath, cachePath, { copySourceDirectory: true, recursive: true });
+            break;
+          case "copy":
+            await (0, import_io.rmRF)(cachePath);
+            await (0, import_io.cp)(targetPath, cachePath, { copySourceDirectory: true, recursive: true });
+            break;
+          case "move":
+            await (0, import_io.rmRF)(cachePath);
+            await (0, import_io.mv)(targetPath, cachePath, { force: true });
+            break;
         }
-        await (0, import_io.cp)(targetPath, cachePath, { copySourceDirectory: true, recursive: true });
-        break;
-      case "copy":
-        await (0, import_io.rmRF)(cachePath);
-        await (0, import_io.cp)(targetPath, cachePath, { copySourceDirectory: true, recursive: true });
-        break;
-      case "move":
-        await (0, import_io.mv)(targetPath, cachePath, { force: true });
-        break;
+      }
+      log_default.info(`Cache saved to ${cachePath} with ${options.strategy} strategy`);
     }
-    log_default.info(`Cache saved to ${cachePath} with ${options.strategy} strategy`);
   } catch (error) {
     log_default.trace(error);
     (0, import_core.setFailed)(isErrorLike(error) ? error.message : `unknown error: ${error}`);

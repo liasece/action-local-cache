@@ -2480,7 +2480,7 @@ var require_io = __commonJS({
           }
           if (destExists) {
             if (options.force == null || options.force) {
-              yield rmRF(dest);
+              yield rmRF2(dest);
             } else {
               throw new Error("Destination already exists");
             }
@@ -2491,7 +2491,7 @@ var require_io = __commonJS({
       });
     }
     exports.mv = mv2;
-    function rmRF(inputPath) {
+    function rmRF2(inputPath) {
       return __awaiter(this, void 0, void 0, function* () {
         if (ioUtil.IS_WINDOWS) {
           if (/[*"<>|]/.test(inputPath)) {
@@ -2510,7 +2510,7 @@ var require_io = __commonJS({
         }
       });
     }
-    exports.rmRF = rmRF;
+    exports.rmRF = rmRF2;
     function mkdirP2(fsPath) {
       return __awaiter(this, void 0, void 0, function* () {
         assert_1.ok(fsPath, "a path argument must be provided");
@@ -2879,25 +2879,32 @@ var getVars = () => {
   }
   const options = {
     key: core.getInput("key") || "no-key",
-    path: core.getInput("path"),
+    path: core.getInput("path").split("\n"),
     strategy: core.getInput("strategy")
   };
-  if (!options.path) {
+  if (options.path.length <= 0) {
     throw new TypeError("path is required but was not provided.");
   }
   if (!Object.values(STRATEGIES).includes(options.strategy)) {
     throw new TypeError(`Unknown strategy ${options.strategy}`);
   }
   const cacheDir = path__default.default.join(RUNNER_TOOL_CACHE, GITHUB_REPOSITORY, options.key);
-  const cachePath = path__default.default.join(cacheDir, options.path);
-  const targetPath = path__default.default.resolve(CWD, options.path);
-  const { dir: targetDir } = path__default.default.parse(targetPath);
+  const cachePathList = [];
+  const targetPathList = [];
+  const targetDirList = [];
+  options.path.forEach((p) => {
+    cachePathList.push(path__default.default.join(cacheDir, p));
+    const targetPath = path__default.default.resolve(CWD, p);
+    targetPathList.push(targetPath);
+    const { dir: targetDir } = path__default.default.parse(targetPath);
+    targetDirList.push(targetDir);
+  });
   return {
     cacheDir,
-    cachePath,
+    cachePath: cachePathList,
     options,
-    targetDir,
-    targetPath
+    targetDir: targetDirList,
+    targetPath: targetPathList
   };
 };
 
@@ -2924,26 +2931,36 @@ var log_default = import_loglevel.default;
 // src/main.ts
 async function main() {
   try {
-    const { cachePath, targetDir, targetPath, options } = getVars();
-    if (await (0, import_io_util.exists)(cachePath)) {
-      await (0, import_io.mkdirP)(targetDir);
-      switch (options.strategy) {
-        case "copy-immutable":
-        case "copy":
-          await (0, import_io.cp)(cachePath, targetPath, {
-            copySourceDirectory: false,
-            recursive: true
-          });
-          break;
-        case "move":
-          await (0, import_io.mv)(cachePath, targetPath, { force: true });
-          break;
+    const vars = getVars();
+    for (let i = 0; i < vars.cachePath.length; i++) {
+      const cachePath = vars.cachePath[i];
+      const targetDir = vars.targetDir[i];
+      const targetPath = vars.targetPath[i];
+      const options = vars.options;
+      if (await (0, import_io_util.exists)(cachePath)) {
+        await (0, import_io.mkdirP)(targetDir);
+        switch (options.strategy) {
+          case "copy-immutable":
+          case "copy":
+            await (0, import_io.rmRF)(targetPath);
+            await (0, import_io.cp)(cachePath, targetPath, {
+              copySourceDirectory: false,
+              recursive: true
+            });
+            break;
+          case "move":
+            await (0, import_io.rmRF)(targetPath);
+            await (0, import_io.mv)(cachePath, targetPath, { force: true });
+            break;
+        }
+        log_default.info(
+          `Cache found and restored from ${targetPath} to ${cachePath} with ${options.strategy} strategy`
+        );
+        (0, import_core.setOutput)("cache-hit", true);
+      } else {
+        log_default.info(`Skipping: cache not found for ${cachePath}.`);
+        (0, import_core.setOutput)("cache-hit", false);
       }
-      log_default.info(`Cache found and restored to ${options.path} with ${options.strategy} strategy`);
-      (0, import_core.setOutput)("cache-hit", true);
-    } else {
-      log_default.info(`Skipping: cache not found for ${options.path}.`);
-      (0, import_core.setOutput)("cache-hit", false);
     }
   } catch (error) {
     console.trace(error);
